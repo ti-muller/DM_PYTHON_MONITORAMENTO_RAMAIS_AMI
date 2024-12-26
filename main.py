@@ -1,27 +1,54 @@
 import asyncio
 import dotenv
 from panoramisk import Manager
+import threading
 from aberturaDeTicket import abreChamado
+from datetime import datetime
 
 config = dotenv.dotenv_values('.env')
 
+# Conexão no gerenciador com as informações que estão no .env
 manager = Manager(loop=asyncio.get_event_loop(),
                 host=config['HOST'],
                 username=config['USERNAME'],
                 secret=config['SECRET'])
 
+# Esse gerenciador monitora eventos de Desligamento 'Shutdown'
+@manager.register_event('Shutdown')
+def alert(manager, message):
+    abreChamado('Alerta: Monitoramento de Ramais', f'Shutdown Event:\n{message}')
+
+# Esse gerenciador monitora todos os eventos
 @manager.register_event('*')
 def callback(manager, message):
+    global timer
+    global hour
     data = string_converter(message)
+    hour = datetime.now().strftime("%H:%M:%S")
     try:
+        # Filtra apenas os eventos de atendimento de ligação: ChannelStateDesc = Up
         if data['ChannelStateDesc'] == 'Up':
-            print(f'Event - {data['Event']}')
-            print(f'CallerIDName - {data['CallerIDName']}')
-            print(f'CallerIDNum - {data['CallerIDNum']}')
-            print(f'DestCallerIDName - {data['DestCallerIDName']}')
-            print(f'DestCallerIDNum - {data['DestCallerIDNum']}')
+            # Cancela o timer
+            timer.cancel()
+            # Se estiver dentro do horário de trabalho da empresa inicia o timer
+            if hour > '08:00:00' and hour < '18:00:00':
+                timer = threading.Timer(1800, lambda: new_ticket()) # 1800
+                timer.start()
+            # Log dos eventos no terminal
+            print('='*20)
+            print(f'Hour - {hour}')
+            for item in data:
+                print(f'{item} - {data[item]}')
     except Exception:
         pass
+
+def new_ticket():
+    abreChamado('Alerta: Monitoramento de Ramais', 'Mais de 30 minutos sem ligação.')
+    # Se estiver dentro do horário de trabalho da empresa inicia o timer
+    hour = datetime.now().strftime("%H:%M:%S")
+    if hour > '08:00:00' and hour < '18:00:00':
+        timer = threading.Timer(1800, lambda: new_ticket()) # 1800
+        timer.start()
 
 
 # Essa função serve para transformar o log de eventos retornado pelo asterisk manager em um dicionário python
@@ -44,7 +71,9 @@ def string_converter(msg):
     # Esse loop adicionará uma virgula ao lado de cada aparição da aspas simples na string, essa virgula será o delimitador para realizar um split da string
     for index, item in enumerate(index_list):
         """
-        Aqui deve ser somando index+item+1, porque: item = a posição da aspas simples na string; +1 pega uma posição depois dessa aspas na string;
+        Aqui deve ser somando index+item+1, porque:
+        item: a posição da aspas simples na string;
+        +1: pega uma posição depois dessa aspas na string;
         index: como a cada momento está sendo adiconado um novo caractere na string, no caso a virgula, pecisa do index da lista para não perder a posição,
         caso contrário a adicição da virgula não ficaria no local correto
         """
@@ -63,7 +92,9 @@ def string_converter(msg):
     return msg_dict
 
 def main():
+    global timer
     manager.connect()
+    timer = threading.Timer(1800, lambda: new_ticket())
     try:
         manager.loop.run_forever()
     except KeyboardInterrupt:
